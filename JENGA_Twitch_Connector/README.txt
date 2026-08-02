@@ -19,11 +19,11 @@ Run:
 setup_and_start.bat
 
 Enter only your Twitch login name:
-arntorius
+username
 
 Do not enter:
-- https://twitch.tv/arntorius
-- #arntorius
+- https://twitch.tv/username
+- #username
 - a display name containing spaces
 
 The connector now performs two explicit steps:
@@ -31,10 +31,10 @@ The connector now performs two explicit steps:
 2. Join the configured channel.
 
 Successful startup shows:
-[JENGA] Configured Twitch channel: #arntorius
+[JENGA] Configured Twitch channel: #username
 [Twitch] Secure IRC connection established: ...
-[Twitch] Channel joined successfully: #arntorius
-[Twitch] Listening to #arntorius
+[Twitch] Channel joined successfully: #username
+[Twitch] Listening to #username
 [Noita] JENGA bridge connected.
 
 Changing the channel
