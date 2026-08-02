@@ -1,0 +1,1 @@
+<Entity name="jenga_stack_zone" tags="jenga_stack_zone"><SpriteComponent image_file="mods/jenga/files/gfx/jenga_stack_marker.png" offset_x="48" offset_y="44" alpha="1" z_index="-1.0" emissive="1"/><LightComponent radius="45" r="255" g="190" b="70"/><LuaComponent script_source_file="mods/jenga/files/stack_zone.lua" execute_every_n_frame="1" remove_after_executed="0"/></Entity>

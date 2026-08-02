@@ -1,0 +1,1 @@
+<Entity name="jenga_controller" tags="jenga_controller"><LuaComponent script_source_file="mods/jenga/files/controller.lua" execute_every_n_frame="1" remove_after_executed="0" /></Entity>

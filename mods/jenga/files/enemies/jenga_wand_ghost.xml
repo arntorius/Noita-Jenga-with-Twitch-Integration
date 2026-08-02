@@ -1,0 +1,15 @@
+<Entity name="$animal_wand_ghost" tags="jenga_wand_ghost">
+    <Base file="data/entities/animals/wand_ghost.xml" />
+
+    <LuaComponent
+        script_source_file="mods/jenga/files/enemies/jenga_wand_ghost_assign.lua"
+        execute_every_n_frame="1"
+        remove_after_executed="0"
+    />
+
+    <LuaComponent
+        script_death="mods/jenga/files/enemies/jenga_wand_ghost_death.lua"
+        execute_every_n_frame="-1"
+        remove_after_executed="0"
+    />
+</Entity>

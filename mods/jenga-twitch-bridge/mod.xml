@@ -1,0 +1,5 @@
+<Mod
+    name="JENGA Twitch Bridge"
+    description="Minimal local bridge for JENGA Twitch spell voting."
+    request_no_api_restrictions="1">
+</Mod>

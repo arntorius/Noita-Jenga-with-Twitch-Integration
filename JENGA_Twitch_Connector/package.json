@@ -1,0 +1,11 @@
+{
+  "name": "jenga-twitch-connector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Twitch chat and Noita bridge for JENGA spell voting",
+  "main": "connector.js",
+  "dependencies": {
+    "tmi.js": "^1.8.5",
+    "ws": "^8.18.0"
+  }
+}
