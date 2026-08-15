@@ -1,0 +1,12 @@
+<Entity
+    name="$animal_jenga_block_boss"
+    tags="enemy,hittable,mortal,homing_target,jenga_awakened_enemy,jenga_block_boss,jenga_progress_large"
+>
+    <Base file="data/entities/animals/slimespirit.xml" />
+
+    <LuaComponent
+        script_source_file="mods/jenga/files/bosses/jenga_block_boss_setup.lua"
+        execute_every_n_frame="1"
+        remove_after_executed="0"
+    />
+</Entity>

@@ -1,0 +1,26 @@
+<Mod
+    name="JENGA"
+    description="JENGA!
+
+
+JENGA completely changes the way you progress through Noita.
+
+Instead of collecting every wand you find, each world wand becomes a source of a single spell. Build your favorite wands over the course of a run by salvaging spells and creating your own always cast combinations.
+
+World wands are never kept unless picked up into an empty slot. Otherwise, they are dismantled, leaving behind only a single spell to strengthen one of your existing wands.
+
+Unwanted wands can be stored on the JENGA stack found in almost every Holy Mountain. But don't let the pile grow too high... abandoned wands have a habit of waking up.
+
+Features
+Two gameplay modes: Random and Normal
+Random Mode keeps one random spell from every world wand
+Normal Mode lets you choose exactly which spell to salvage
+Permanently bound spells cannot be removed or rearranged
+JENGA stacks appear in almost every Holy Mountain
+Wand ghosts may emerge from oversized stacks
+Hold Left Alt while hovering a wand to inspect permanently bound spells
+
+Remember: Every wand is temporary. Every spell is forever."
+    tags="gameplay,spells,items,streaming integration"
+>
+</Mod>

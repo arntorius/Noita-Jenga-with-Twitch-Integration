@@ -1,0 +1,12 @@
+<Entity
+    name="$animal_jenga_confusion_boss"
+    tags="enemy,hittable,mortal,homing_target,jenga_awakened_enemy,jenga_confusion_boss,jenga_progress_small"
+>
+    <Base file="data/entities/animals/confusespirit.xml" />
+
+    <LuaComponent
+        script_source_file="mods/jenga/files/bosses/jenga_confusion_boss_setup.lua"
+        execute_every_n_frame="1"
+        remove_after_executed="0"
+    />
+</Entity>

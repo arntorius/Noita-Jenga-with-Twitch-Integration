@@ -1,3 +1,4 @@
+dofile_once("mods/jenga/files/bosses/jenga_boss_spawn.lua")
 -- =========================================================
 -- JENGA – Hauptcontroller
 -- =========================================================
@@ -23,6 +24,24 @@ if player == nil
     or player == 0
     or not EntityGetIsAlive(player)
 then
+    return
+end
+
+-- Polymorphine variants and Cessation temporarily replace/control another
+-- entity. JENGA must not interpret that temporary inventory state as wand
+-- pickup/drop activity.
+if not EntityHasTag(
+    player,
+    "player_unit"
+) then
+    return
+end
+
+if #(
+    EntityGetWithTag(
+        "polymorphed_player"
+    ) or {}
+) > 0 then
     return
 end
 
@@ -921,8 +940,29 @@ local function restore_locked_spell(spell)
         SPELL_LOCK_SLOT_Y
     )
 
-    if not is_alive(wand) then
-        unlock_spell(spell)
+    -- Entity IDs are not stable references across save/load. The spell's
+    -- actual parent is authoritative after deserialization.
+    local current_parent =
+        EntityGetParent(spell)
+
+    if is_alive(current_parent)
+        and is_wand(current_parent)
+    then
+        if wand ~= current_parent then
+            wand = current_parent
+
+            set_entity_storage_int(
+                spell,
+                SPELL_LOCK_WAND,
+                wand
+            )
+        end
+    elseif not is_alive(wand)
+        or not is_wand(wand)
+    then
+        -- Do not unlock merely because a serialized EntityID is stale.
+        -- If the parent has not been restored yet, leave the spell untouched
+        -- and retry on the next frame.
         return
     end
 
@@ -1707,6 +1747,11 @@ local function awaken_stack(zone)
     end
 
     if spawned > 0 then
+        JENGA_BOSSES.spawn_for_stack(
+            zone,
+            #wands
+        )
+
         GamePrintImportant(
             "JENGA!",
             tostring(spawned)
@@ -1899,6 +1944,12 @@ local function add_wand_to_stack(wand, zone)
 
     make_wand_owned(wand)
     set_wand_stack_home(wand, zone)
+
+    JENGA_INTERNAL
+        .set_wand_world_item_state(
+            wand
+        )
+
     set_wand_pickable(wand, false)
 
     EntityAddTag(wand, "jenga_stacked_wand")
@@ -1966,6 +2017,16 @@ local function remove_wand_from_inventory(wand)
         return false
     end
 
+    if JENGA_INTERNAL
+        and JENGA_INTERNAL
+            .release_wand_from_active_hand
+    then
+        JENGA_INTERNAL
+            .release_wand_from_active_hand(
+                wand
+            )
+    end
+
     local parent = EntityGetParent(wand)
 
     if parent ~= nil and parent ~= 0 then
@@ -1973,6 +2034,139 @@ local function remove_wand_from_inventory(wand)
     end
 
     return true
+end
+
+function JENGA_INTERNAL.release_wand_from_active_hand(wand)
+    if not is_alive(wand) then
+        return false
+    end
+
+    local inventory2 =
+        EntityGetFirstComponentIncludingDisabled(
+            player,
+            "Inventory2Component"
+        )
+
+    if inventory2 == nil then
+        return false
+    end
+
+    local active_item =
+        ComponentGetValue2(
+            inventory2,
+            "mActiveItem"
+        ) or 0
+
+    if active_item ~= wand then
+        return false
+    end
+
+    -- In the one-wand/full-target swap case Noita can leave the picked world
+    -- wand as the active hand item even after it is no longer a valid inventory
+    -- wand. Clear that reference before moving the entity to the JENGA stack.
+    pcall(
+        ComponentSetValue2,
+        inventory2,
+        "mActiveItem",
+        0
+    )
+
+    -- These fields are not present in every Noita build. pcall keeps the
+    -- helper compatible while clearing them where available.
+    pcall(
+        ComponentSetValue2,
+        inventory2,
+        "mActualActiveItem",
+        0
+    )
+
+    pcall(
+        ComponentSetValue2,
+        inventory2,
+        "mActiveItemIndex",
+        -1
+    )
+
+    pcall(
+        ComponentSetValue2,
+        inventory2,
+        "mForceRefresh",
+        true
+    )
+
+    return true
+end
+
+function JENGA_INTERNAL.set_wand_world_item_state(wand)
+    if not is_alive(wand) then
+        return false
+    end
+
+    -- Noita item entities use these component tags to switch between
+    -- inventory, held and world representations.
+    pcall(
+        EntitySetComponentsWithTagEnabled,
+        wand,
+        "enabled_in_inventory",
+        false
+    )
+
+    pcall(
+        EntitySetComponentsWithTagEnabled,
+        wand,
+        "enabled_in_hand",
+        false
+    )
+
+    pcall(
+        EntitySetComponentsWithTagEnabled,
+        wand,
+        "enabled_in_world",
+        true
+    )
+
+    -- Force any surviving world sprite visible. This is a harmless fallback
+    -- for unusual or modded wand entities that do not use the standard tags.
+    for _, sprite in ipairs(
+        EntityGetComponentIncludingDisabled(
+            wand,
+            "SpriteComponent"
+        ) or {}
+    ) do
+        pcall(
+            ComponentSetValue2,
+            sprite,
+            "visible",
+            true
+        )
+    end
+
+    return true
+end
+
+function JENGA_INTERNAL.repair_visible_stacked_wands()
+    for _, wand in ipairs(
+        EntityGetWithTag(
+            "jenga_stacked_wand"
+        ) or {}
+    ) do
+        if is_alive(wand)
+            and (
+                EntityGetParent(wand) == nil
+                or EntityGetParent(wand) == 0
+            )
+        then
+            JENGA_INTERNAL
+                .set_wand_world_item_state(
+                    wand
+                )
+
+            set_wand_pickable(
+                wand,
+                false
+            )
+        end
+    end
 end
 
 local function place_wand_near_player(wand)
@@ -2035,6 +2229,161 @@ local function start_pending_operation(
         STORAGE_PENDING_FRAMES,
         0
     )
+end
+
+function JENGA_INTERNAL.send_world_wand_to_nearest_stack(wand)
+    if not is_alive(wand) then
+        return false
+    end
+
+    JENGA_INTERNAL
+        .release_wand_from_active_hand(
+            wand
+        )
+
+    local player_x, player_y =
+        EntityGetTransform(player)
+
+    local nearest_zone = nil
+    local nearest_distance = nil
+
+    -- Prefer an actually loaded stack-zone entity.
+    for _, zone in ipairs(
+        EntityGetWithTag(
+            "jenga_stack_zone"
+        ) or {}
+    ) do
+        if is_alive(zone) then
+            local zone_x, zone_y =
+                EntityGetTransform(zone)
+
+            local dist =
+                distance_squared(
+                    player_x,
+                    player_y,
+                    zone_x,
+                    zone_y
+                )
+
+            if nearest_zone == nil
+                or dist < nearest_distance
+            then
+                nearest_zone = zone
+                nearest_distance = dist
+            end
+        end
+    end
+
+    if nearest_zone ~= nil then
+        remove_wand_from_inventory(wand)
+
+        if add_wand_to_stack(
+            wand,
+            nearest_zone
+        ) then
+            return true
+        end
+    end
+
+    -- If no stack entity is currently loaded, use the nearest known Holy
+    -- Mountain JENGA stack position in the current parallel world.
+    local world_offset =
+        get_parallel_world_offset(
+            player_x
+        )
+
+    local nearest_x = nil
+    local nearest_y = nil
+    local nearest_position_distance = nil
+
+    for mountain_index = 0,
+        JENGA_MOUNTAIN_COUNT - 1
+    do
+        local stack_x, stack_y =
+            get_stack_position(
+                mountain_index,
+                world_offset
+            )
+
+        local dist =
+            distance_squared(
+                player_x,
+                player_y,
+                stack_x,
+                stack_y
+            )
+
+        if nearest_x == nil
+            or dist
+                < nearest_position_distance
+        then
+            nearest_x = stack_x
+            nearest_y = stack_y
+            nearest_position_distance =
+                dist
+        end
+    end
+
+    if nearest_x == nil
+        or nearest_y == nil
+    then
+        return false
+    end
+
+    remove_wand_from_inventory(wand)
+    make_wand_owned(wand)
+
+    JENGA_INTERNAL
+        .set_wand_world_item_state(
+            wand
+        )
+
+    set_wand_pickable(
+        wand,
+        false
+    )
+
+    EntityAddTag(
+        wand,
+        "jenga_stacked_wand"
+    )
+
+    EntitySetTransform(
+        wand,
+        nearest_x,
+        nearest_y
+    )
+
+    local velocity =
+        EntityGetFirstComponentIncludingDisabled(
+            wand,
+            "VelocityComponent"
+        )
+
+    if velocity ~= nil then
+        ComponentSetValue2(
+            velocity,
+            "mVelocity",
+            0,
+            0
+        )
+    end
+
+    -- Store the destination directly, so return/stack logic still knows the
+    -- correct home position even if the stack-zone entity was not loaded.
+    set_entity_storage_float(
+        wand,
+        WAND_STACK_HOME_X,
+        nearest_x
+    )
+
+    set_entity_storage_float(
+        wand,
+        WAND_STACK_HOME_Y,
+        nearest_y
+    )
+
+    return true
 end
 
 local function process_pending_operation()
@@ -2555,12 +2904,12 @@ local function start_spell_selection(donor, target, selection_type)
     local spells = get_normal_spells(donor)
     if #spells == 0 then return false end
 
-    if get_gameplay_mode() == "twitch" then
-        spells =
-            JENGA_INTERNAL.get_unique_vote_spells(
-                spells
-            )
-    end
+    local mode = get_gameplay_mode()
+
+    local distinct_spells =
+        JENGA_INTERNAL.get_unique_vote_spells(
+            spells
+        )
 
     set_bool(STORAGE_SELECTION_ACTIVE, true)
 
@@ -2573,28 +2922,29 @@ local function start_spell_selection(donor, target, selection_type)
         false
     )
 
-    if get_gameplay_mode() == "twitch" then
-        -- A vote is unnecessary when there is only one possible spell.
-        if #spells == 1 then
-            set_int(
-                STORAGE_SELECTION_SPELL,
-                spells[1].entity
-            )
+    -- Skip both the manual picker and Twitch vote if every selectable spell
+    -- is the same action.
+    if #distinct_spells == 1 then
+        set_int(
+            STORAGE_SELECTION_SPELL,
+            distinct_spells[1].entity
+        )
 
-            set_bool(
-                STORAGE_TWITCH_PENDING_CONFIRM,
-                true
-            )
+        set_bool(
+            STORAGE_TWITCH_PENDING_CONFIRM,
+            true
+        )
 
-            GamePrint(
-                "JENGA: Only one distinct spell available; selected automatically."
-            )
+        GamePrint(
+            "JENGA: Only one distinct spell available; selected automatically."
+        )
 
-            return true
-        end
+        return true
+    end
 
-        -- Player movement remains fully controllable during chat voting.
-        -- Inventory is locked and other world wands are unpickable.
+    if mode == "twitch" then
+        spells = distinct_spells
+
         lock_native_inventory_during_selection()
         start_twitch_vote(spells)
         set_world_wand_selection_lock(true)
@@ -2651,19 +3001,57 @@ local function confirm_spell_selection()
         end
 
         if get_first_free_spell_slot(target) == nil then
-            place_wand_near_player(donor)
+            local sent_to_stack =
+                JENGA_INTERNAL
+                    .send_world_wand_to_nearest_stack(
+                        donor
+                    )
 
-            start_pending_operation(
-                PENDING_RESTORE_AFTER_CANCEL,
-                target,
-                donor
-            )
+            if not sent_to_stack then
+                place_wand_near_player(
+                    donor
+                )
+            end
 
             clear_spell_selection()
 
-            GamePrint(
-                "JENGA: This wand is full. Take it to the JENGA stack before collecting another spell."
-            )
+            if is_alive(target)
+                and not inventory_contains_entity(
+                    target
+                )
+            then
+                pick_up_wand(
+                    target
+                )
+            end
+
+            if inventory_contains_entity(
+                target
+            ) then
+                make_wand_owned(
+                    target
+                )
+
+                save_current_wands(
+                    get_inventory_wands()
+                )
+            else
+                start_pending_operation(
+                    PENDING_RESTORE_AFTER_CANCEL,
+                    target,
+                    donor
+                )
+            end
+
+            if sent_to_stack then
+                GamePrint(
+                    "JENGA: Target wand is full. World wand sent to the nearest JENGA stack."
+                )
+            else
+                GamePrint(
+                    "JENGA: Target wand is full. World wand returned safely."
+                )
+            end
 
             return true
         end
@@ -5241,9 +5629,25 @@ local function handle_manual_wand_drops(
             else
                 pick_up_wand(wand)
 
-                GamePrint(
-                    "JENGA: Wands can only be dropped at the JENGA stack."
-                )
+                -- A real manual wand drop is performed through the inventory.
+                -- During Noita's native occupied-slot pickup swap, however,
+                -- the selected player wand can briefly look like a drop while
+                -- the inventory is closed. If that selected wand is already
+                -- full, this is the full-wand redirect case, not an attempted
+                -- manual drop.
+                if not GameIsInventoryOpen()
+                    and get_first_free_spell_slot(
+                        wand
+                    ) == nil
+                then
+                    GamePrint(
+                        "JENGA: Selected wand is full. World wand sent to the nearest JENGA stack."
+                    )
+                else
+                    GamePrint(
+                        "JENGA: Wands can only be dropped at the JENGA stack."
+                    )
+                end
             end
         end
     end
@@ -5272,6 +5676,203 @@ local function lock_existing_spells_on_wand(wand)
             spell_data.slot_y
         )
     end
+end
+
+function JENGA_INTERNAL.repair_after_save_load()
+    local current =
+        get_inventory_wands()
+
+    local current_set =
+        current_wand_set(current)
+
+    local previous =
+        load_previous_wands()
+
+    local previous_count =
+        count_entries(previous)
+
+    local matched_previous = 0
+    local invalid_previous = false
+
+    for _, old_wand in pairs(previous) do
+        if current_set[old_wand] then
+            matched_previous =
+                matched_previous + 1
+        elseif not is_alive(old_wand)
+            or not is_wand(old_wand)
+        then
+            invalid_previous = true
+        end
+    end
+
+    -- Rebind every persistent JENGA spell to the wand it is actually parented
+    -- to after the save serializer has reconstructed the entity tree.
+    local repaired_wands = {}
+
+    for _, wand_data in ipairs(current) do
+        local wand = wand_data.entity
+
+        for _, spell in ipairs(
+            EntityGetAllChildren(wand) or {}
+        ) do
+            if EntityHasTag(
+                spell,
+                SPELL_LOCK_TAG
+            ) then
+                local stored_wand =
+                    get_entity_storage_int(
+                        spell,
+                        SPELL_LOCK_WAND
+                    )
+
+                if stored_wand ~= wand then
+                    set_entity_storage_int(
+                        spell,
+                        SPELL_LOCK_WAND,
+                        wand
+                    )
+
+                    repaired_wands[wand] =
+                        true
+                end
+
+                local stored_slot_x =
+                    get_entity_storage_int(
+                        spell,
+                        SPELL_LOCK_SLOT_X
+                    )
+
+                local stored_slot_y =
+                    get_entity_storage_int(
+                        spell,
+                        SPELL_LOCK_SLOT_Y
+                    )
+
+                local current_slot_x,
+                    current_slot_y =
+                        get_item_slot(spell)
+
+                if stored_slot_x < 0 then
+                    stored_slot_x =
+                        current_slot_x
+
+                    set_entity_storage_int(
+                        spell,
+                        SPELL_LOCK_SLOT_X,
+                        stored_slot_x
+                    )
+                end
+
+                if stored_slot_y < 0 then
+                    stored_slot_y =
+                        current_slot_y
+
+                    set_entity_storage_int(
+                        spell,
+                        SPELL_LOCK_SLOT_Y,
+                        stored_slot_y
+                    )
+                end
+
+                set_spell_locked(
+                    spell,
+                    true
+                )
+            end
+        end
+    end
+
+    for wand, _ in pairs(
+        repaired_wands
+    ) do
+        JENGA_INTERNAL
+            .regen_item_actions_preserving_charges(
+                wand
+            )
+    end
+
+    -- A normal occupied-slot wand pickup can legitimately replace every
+    -- inventory wand ID for a frame. This is especially common when the player
+    -- carries exactly one wand: previous={old wand}, current={world donor}.
+    -- That state is NOT a save/load.
+    --
+    -- Treat the state as a reload only when a stored previous EntityID is
+    -- actually invalid/dead. Entity IDs reconstructed by loading a save satisfy
+    -- that condition, while a wand merely ejected onto the floor remains alive.
+    if not invalid_previous then
+        return false
+    end
+
+    -- Transient entity IDs from selection/pending operations cannot safely be
+    -- resumed after reload.
+    set_int(
+        STORAGE_PENDING_STATE,
+        PENDING_NONE
+    )
+    set_int(
+        STORAGE_PENDING_OLD_WAND,
+        0
+    )
+    set_int(
+        STORAGE_PENDING_DONOR_WAND,
+        0
+    )
+    set_int(
+        STORAGE_PENDING_FRAMES,
+        0
+    )
+
+    set_bool(
+        STORAGE_SELECTION_ACTIVE,
+        false
+    )
+    set_int(
+        STORAGE_SELECTION_DONOR,
+        0
+    )
+    set_int(
+        STORAGE_SELECTION_TARGET,
+        0
+    )
+    set_int(
+        STORAGE_SELECTION_TYPE,
+        SELECTION_NONE
+    )
+    set_int(
+        STORAGE_SELECTION_SPELL,
+        0
+    )
+    set_bool(
+        STORAGE_TWITCH_PENDING_CONFIRM,
+        false
+    )
+
+    set_player_controls_enabled(true)
+    set_world_wand_selection_lock(false)
+
+    -- If the save happened during a selection, an unowned donor world wand
+    -- can remain in the inventory. Put only that transient donor back into the
+    -- world rather than treating it as an already processed player wand.
+    for _, wand_data in ipairs(
+        get_inventory_wands()
+    ) do
+        local wand = wand_data.entity
+
+        if is_alive(wand)
+            and not EntityHasTag(
+                wand,
+                "jenga_owned_wand"
+            )
+        then
+            place_wand_near_player(wand)
+        end
+    end
+
+    save_current_wands(
+        get_inventory_wands()
+    )
+
+    return true
 end
 
 local function initialize_controller()
@@ -5343,6 +5944,18 @@ end
 -- =========================================================
 
 try_spawn_holy_mountain_stack_zone()
+
+-- Repair inventory/hand render state on stacked wands. This is especially
+-- important for world wands that were remotely routed to a JENGA stack while
+-- they were still in inventory state.
+JENGA_INTERNAL.repair_visible_stacked_wands()
+
+-- Entity IDs stored in VariableStorageComponents can become stale after
+-- Save & Quit. Repair persistent wand/spell relationships before processing
+-- any pickup, drop, pending or selection state.
+if JENGA_INTERNAL.repair_after_save_load() then
+    return
+end
 
 -- A Normal mode selection owns the inventory state until confirmed/cancelled.
 if JENGA_INTERNAL.process_spell_selection() then
@@ -5487,17 +6100,60 @@ end
 
 if is_alive(old_wand) then
     if get_first_free_spell_slot(old_wand) == nil then
-        place_wand_near_player(added_wand)
+        local sent_to_stack =
+            JENGA_INTERNAL
+                .send_world_wand_to_nearest_stack(
+                    added_wand
+                )
 
-        start_pending_operation(
-            PENDING_RESTORE_AFTER_CANCEL,
-            old_wand,
-            added_wand
-        )
+        if not sent_to_stack then
+            place_wand_near_player(
+                added_wand
+            )
+        end
 
-        GamePrint(
-            "JENGA: This wand is full. Take it to the JENGA stack before collecting another spell."
-        )
+        -- The player explicitly chose this occupied wand slot. Restore the
+        -- displaced target immediately after the donor leaves the inventory.
+        if is_alive(old_wand)
+            and not inventory_contains_entity(
+                old_wand
+            )
+        then
+            pick_up_wand(
+                old_wand
+            )
+        end
+
+        if inventory_contains_entity(
+            old_wand
+        ) then
+            make_wand_owned(
+                old_wand
+            )
+
+            save_current_wands(
+                get_inventory_wands()
+            )
+        else
+            -- Noita often exposes the pickup on the following frame. The donor
+            -- is already detached from the active hand, so this retry can now
+            -- restore the player's wand without being blocked by a ghost item.
+            start_pending_operation(
+                PENDING_RESTORE_AFTER_CANCEL,
+                old_wand,
+                added_wand
+            )
+        end
+
+        if sent_to_stack then
+            GamePrint(
+                "JENGA: This wand is full. World wand sent to the nearest JENGA stack."
+            )
+        else
+            GamePrint(
+                "JENGA: This wand is full. World wand returned safely."
+            )
+        end
 
         return
     end
